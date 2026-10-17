@@ -1,4 +1,4 @@
-use std::{io, vec};
+use std::{io};
 
 struct PasswordEntry {
     website: String,
@@ -106,14 +106,14 @@ fn main() {
 
                     let result = entries
                         .iter()
-                        .find(|entry| entry.belongs_to(&user_website_input));
+                        .find(|entry| entry.belongs_to(&user_website_input.trim()));
 
                     match result {
                         Some(entry) => {
-                            println!("Entry found.");
+                            println!("\nEntry found.");
                             entry.display();
                         }
-                        None => println!("No entry found"),
+                        None => println!("\nNo entry found"),
                     }
                 } else {
                     println!("No entries found!");
