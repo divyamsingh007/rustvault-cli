@@ -37,8 +37,31 @@ fn save_entries(entries: &[PasswordEntry]) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
+fn load_entries() -> Result<Vec<PasswordEntry>, Box<dyn std::error::Error>> {
+    let path = std::path::Path::new("vault.json");
+
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let contents = std::fs::read_to_string(path)?;
+
+    let entries: Vec<PasswordEntry> = serde_json::from_str(&contents)?;
+
+    Ok(entries)
+}
+
 fn main() {
-    let mut entries: Vec<PasswordEntry> = Vec::new();
+    let mut entries = match load_entries() {
+        Ok(entries) => {
+            println!("Loaded {} saved entries.", entries.len());
+            entries
+        }
+        Err(error) => {
+            eprintln!("Failed to load vault: {error}");
+            return;
+        }
+    };
 
     loop {
         println!("\n===== RustVault =====");
@@ -115,7 +138,7 @@ fn main() {
                 println!();
 
                 let entry = PasswordEntry::new(
-                    website.trim().to_lowercase().to_string(),
+                    website.trim().to_lowercase(),
                     username.trim().to_string(),
                     password.trim().to_string(),
                 );
@@ -126,12 +149,12 @@ fn main() {
                 {
                     existing.username = entry.username;
                     existing.password = entry.password;
-                    println!("Creadentials updated successfully!")
+                    println!("Credentials updated successfully!")
                 } else {
                     entries.push(entry);
                 }
                 match save_entries(&entries) {
-                    Ok(()) => println!("Entry added and saved successfully!"),
+                    Ok(()) => println!("Vault saved successfully!"),
                     Err(error) => eprintln!("Failed to save entries: {error}"),
                 }
             }
