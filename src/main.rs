@@ -27,6 +27,13 @@ impl PasswordEntry {
     fn belongs_to(&self, website: &str) -> bool {
         self.website.eq_ignore_ascii_case(website.trim())
     }
+
+    fn reveal(&self) {
+        println!("Website: {}", self.website);
+        println!("Username: {}", self.username);
+        println!("Password: {}", self.password);
+        println!();
+    }
 }
 
 fn save_entries(entries: &[PasswordEntry]) -> Result<(), Box<dyn std::error::Error>> {
@@ -68,7 +75,9 @@ fn main() {
         println!("1. Add an entry");
         println!("2. View all entries");
         println!("3. Search for an entry");
-        println!("4. Exit");
+        println!("4. Delete an entry");
+        println!("5. Reveal password");
+        println!("6. Exit RustVault");
 
         let mut choice = String::new();
 
@@ -192,13 +201,65 @@ fn main() {
                             println!("\nEntry found.");
                             entry.display();
                         }
-                        None => println!("\nNo entry found"),
+                        None => println!("\nNo entry found!"),
                     }
                 } else {
                     println!("No entries found!");
                 }
             }
             "4" => {
+                if entries.is_empty() {
+                    println!("\nNo entries found for deletion!");
+                } else {
+                    let mut user_delete_input = String::new();
+                    println!("\nEnter the website whose credentials you want to delete:");
+                    io::stdin()
+                        .read_line(&mut user_delete_input)
+                        .expect("Failed to read input.");
+
+                    let index = entries
+                        .iter()
+                        .position(|entry| entry.belongs_to(user_delete_input.trim()));
+
+                    match index {
+                        Some(index) => {
+                            entries.remove(index);
+                            println!("\nEntry removed successfully!");
+                        }
+                        None => println!("Failed to remove the entry!"),
+                    }
+
+                    save_entries(&entries);
+                    match save_entries(&entries) {
+                        Ok(()) => println!("Vault updated successfully!"),
+                        Err(error) => eprintln!("Failed to save vault: {error}"),
+                    }
+                }
+            }
+            "5" => {
+                if entries.is_empty() {
+                    println!("\nNo entries found for deletion!");
+                } else {
+                    let mut user_password_input = String::new();
+                    println!("\nEnter the website to reveal its password: ");
+                    io::stdin()
+                        .read_line(&mut user_password_input)
+                        .expect("Failed to read input");
+
+                    let result = entries
+                        .iter()
+                        .find(|entry| entry.belongs_to(user_password_input.trim()));
+
+                    match result {
+                        Some(entry) => {
+                            println!();
+                            entry.reveal();
+                        }
+                        None => println!("No credentials found for this website."),
+                    }
+                }
+            }
+            "6" => {
                 println!("\nExiting Rust Vault...");
                 break;
             }
