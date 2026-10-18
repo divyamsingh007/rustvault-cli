@@ -1,4 +1,4 @@
-use std::{io};
+use std::io;
 
 struct PasswordEntry {
     website: String,
@@ -23,7 +23,7 @@ impl PasswordEntry {
     }
 
     fn belongs_to(&self, website: &str) -> bool {
-        self.website == website
+        self.website.eq_ignore_ascii_case(website.trim())
     }
 }
 
@@ -51,33 +51,76 @@ fn main() {
                 let mut username = String::new();
                 let mut password = String::new();
 
-                println!("Enter the webiste: ");
-                io::stdin()
-                    .read_line(&mut website)
-                    .expect("Failed to read webiste.");
+                loop {
+                    println!("Enter the website:");
+
+                    website.clear();
+
+                    io::stdin()
+                        .read_line(&mut website)
+                        .expect("Failed to read website.");
+
+                    if website.trim().is_empty() {
+                        println!("Website cannot be empty! Try again.");
+                    } else {
+                        println!("Website accepted!");
+                        break;
+                    }
+                }
                 println!();
 
-                println!("Enter the username: ");
-                io::stdin()
-                    .read_line(&mut username)
-                    .expect("Failed to read username.");
+                loop {
+                    println!("Enter the username: ");
+
+                    username.clear();
+                    io::stdin()
+                        .read_line(&mut username)
+                        .expect("Failed to read username.");
+
+                    if username.trim().is_empty() {
+                        println!("Username cannot be empty! Try again.");
+                    } else {
+                        println!("Username accepted!");
+                        break;
+                    }
+                }
                 println!();
 
-                println!("Enter the password: ");
-                io::stdin()
-                    .read_line(&mut password)
-                    .expect("Failed to read password.");
+                loop {
+                    println!("Enter the password: ");
+
+                    password.clear();
+
+                    io::stdin()
+                        .read_line(&mut password)
+                        .expect("Failed to read password.");
+
+                    if password.trim().is_empty() {
+                        println!("Password cannot be empty! Try again.")
+                    } else {
+                        println!("Password accepted!");
+                        break;
+                    }
+                }
                 println!();
 
                 let entry = PasswordEntry::new(
-                    website.trim().to_string(),
+                    website.trim().to_lowercase().to_string(),
                     username.trim().to_string(),
                     password.trim().to_string(),
                 );
 
-                entries.push(entry);
-
-                println!("Entry added successfully!")
+                if let Some(existing) = entries
+                    .iter_mut()
+                    .find(|existing| existing.belongs_to(entry.website.as_str()))
+                {
+                    existing.username = entry.username;
+                    existing.password = entry.password;
+                    println!("Creadentials updated successfully!")
+                } else {
+                    entries.push(entry);
+                    println!("Entry added successfully!")
+                }
             }
             "2" => {
                 if !entries.is_empty() {
