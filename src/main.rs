@@ -1,5 +1,7 @@
+use serde::{Deserialize, Serialize};
 use std::io;
 
+#[derive(Serialize, Deserialize)]
 struct PasswordEntry {
     website: String,
     username: String,
@@ -25,6 +27,14 @@ impl PasswordEntry {
     fn belongs_to(&self, website: &str) -> bool {
         self.website.eq_ignore_ascii_case(website.trim())
     }
+}
+
+fn save_entries(entries: &[PasswordEntry]) -> Result<(), Box<dyn std::error::Error>> {
+    let json = serde_json::to_string_pretty(entries)?;
+
+    std::fs::write("vault.json", json)?;
+
+    Ok(())
 }
 
 fn main() {
@@ -119,7 +129,10 @@ fn main() {
                     println!("Creadentials updated successfully!")
                 } else {
                     entries.push(entry);
-                    println!("Entry added successfully!")
+                }
+                match save_entries(&entries) {
+                    Ok(()) => println!("Entry added and saved successfully!"),
+                    Err(error) => eprintln!("Failed to save entries: {error}"),
                 }
             }
             "2" => {
