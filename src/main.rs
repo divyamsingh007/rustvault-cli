@@ -1,4 +1,9 @@
+use aes_gcm::{
+    Aes256Gcm, Error, Nonce,
+    aead::{Aead, KeyInit},
+};
 use argon2::Argon2;
+use core::error;
 use getrandom::fill;
 use serde::{Deserialize, Serialize};
 use std::io;
@@ -83,6 +88,34 @@ fn derive_key(master_password: &str, salt: &[u8; 16]) -> Result<[u8; 32], argon2
     Ok(key)
 }
 
+fn encrypt_data(
+    plaintext: &[u8],
+    key: &[u8; 32],
+    nonce: &[u8; 12],
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let cipher = Aes256Gcm::new_from_slice(key)?;
+
+    let nonce = Nonce::from_slice(nonce);
+
+    let ciphertext = cipher.encrypt(nonce, plaintext)?;
+
+    Ok(ciphertext)
+}
+
+fn decrypt_data(
+    ciphertext: &[u8],
+    key: &[u8; 32],
+    nonce: &[u8; 12],
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let cipher = Aes256Gcm::new_from_slice(key)?;
+
+    let nonce = Nonce::from_slice(nonce);
+
+    let plaintext = cipher.decrypt(nonce, ciphertext)?;
+
+    Ok(plaintext)
+}
+
 fn main() {
     let salt = match generate_salt() {
         Ok(salt) => {
@@ -102,19 +135,48 @@ fn main() {
             return;
         }
     };
+    println!("Master Password received successfully!");
 
-    match derive_key(&master_password, &salt) {
+    let key = match derive_key(&master_password, &salt) {
         Ok(key) => {
             println!("Key derived successfully!");
-            println!("Key length: {} bytes", key.len())
+            println!("Key length: {} bytes", key.len());
+            key
         }
         Err(error) => {
             eprintln!("Key derivation failed: {error}");
             return;
         }
+    };
+
+    let test_data = b"RustVault Encryption test";
+
+    let mut nonce = [0u8; 12];
+
+    if let Err(error) = fill(&mut nonce) {
+        eprintln!("Failed to generate nonce: {error}");
+        return;
     }
 
-    println!("Master Password received successfully!");
+    let ciphertext = match encrypt_data(test_data, &key, &nonce) {
+        Ok(ciphertext) => ciphertext,
+        Err(error) => {
+            eprintln!("Encryption Failed: {error}");
+            return;
+        }
+    };
+
+    let plaintext = match decrypt_data(&ciphertext, &key, &nonce) {
+        Ok(plaintext) => plaintext,
+        Err(error) => {
+            eprintln!("Decryption Failed: {error}");
+            return;
+        }
+    };
+
+    assert_eq!(plaintext.as_slice(), test_data);
+
+    println!("Encryption & Decryption succeeded!");
 
     let mut entries = match load_entries() {
         Ok(entries) => {
