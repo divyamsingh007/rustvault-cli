@@ -1,3 +1,5 @@
+use argon2::Argon2;
+use getrandom::fill;
 use serde::{Deserialize, Serialize};
 use std::io;
 
@@ -36,6 +38,11 @@ impl PasswordEntry {
     }
 }
 
+fn get_master_password() -> Result<String, Box<dyn std::error::Error>> {
+    let master_password = rpassword::prompt_password("Enter Master Password: ")?;
+    Ok(master_password)
+}
+
 fn save_entries(entries: &[PasswordEntry]) -> Result<(), Box<dyn std::error::Error>> {
     let json = serde_json::to_string_pretty(entries)?;
 
@@ -58,7 +65,57 @@ fn load_entries() -> Result<Vec<PasswordEntry>, Box<dyn std::error::Error>> {
     Ok(entries)
 }
 
+fn generate_salt() -> Result<[u8; 16], getrandom::Error> {
+    let mut salt = [0u8; 16];
+
+    fill(&mut salt)?;
+
+    Ok(salt)
+}
+
+fn derive_key(master_password: &str, salt: &[u8; 16]) -> Result<[u8; 32], argon2::Error> {
+    let argon2 = Argon2::default();
+
+    let mut key = [0u8; 32];
+
+    argon2.hash_password_into(master_password.as_bytes(), salt, &mut key)?;
+
+    Ok(key)
+}
+
 fn main() {
+    let salt = match generate_salt() {
+        Ok(salt) => {
+            println!("Salt generated successfully!");
+            salt
+        }
+        Err(error) => {
+            eprintln!("Failed to generate salt: {error}");
+            return;
+        }
+    };
+
+    let master_password = match get_master_password() {
+        Ok(master_password) => master_password,
+        Err(error) => {
+            eprintln!("Failed to read Master Password: {error}");
+            return;
+        }
+    };
+
+    match derive_key(&master_password, &salt) {
+        Ok(key) => {
+            println!("Key derived successfully!");
+            println!("Key length: {} bytes", key.len())
+        }
+        Err(error) => {
+            eprintln!("Key derivation failed: {error}");
+            return;
+        }
+    }
+
+    println!("Master Password received successfully!");
+
     let mut entries = match load_entries() {
         Ok(entries) => {
             println!("Loaded {} saved entries.", entries.len());
@@ -229,7 +286,6 @@ fn main() {
                         None => println!("Failed to remove the entry!"),
                     }
 
-                    save_entries(&entries);
                     match save_entries(&entries) {
                         Ok(()) => println!("Vault updated successfully!"),
                         Err(error) => eprintln!("Failed to save vault: {error}"),
