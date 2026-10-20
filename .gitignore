@@ -1,3 +1,5 @@
-/target
+/target/
 
-vault.json
+/vault.json
+/vault.enc.json
+/vault.enc.backup.json

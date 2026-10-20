@@ -1,9 +1,9 @@
 use aes_gcm::{
-    Aes256Gcm, Error, Nonce,
+    Aes256Gcm, Nonce,
     aead::{Aead, KeyInit},
 };
 use argon2::Argon2;
-use core::error;
+use base64::{Engine, engine::general_purpose::STANDARD};
 use getrandom::fill;
 use serde::{Deserialize, Serialize};
 use std::io;
@@ -13,6 +13,14 @@ struct PasswordEntry {
     website: String,
     username: String,
     password: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct EncryptedVault {
+    version: u32,
+    salt: String,
+    nonce: String,
+    ciphertext: String,
 }
 
 impl PasswordEntry {
@@ -48,28 +56,6 @@ fn get_master_password() -> Result<String, Box<dyn std::error::Error>> {
     Ok(master_password)
 }
 
-fn save_entries(entries: &[PasswordEntry]) -> Result<(), Box<dyn std::error::Error>> {
-    let json = serde_json::to_string_pretty(entries)?;
-
-    std::fs::write("vault.json", json)?;
-
-    Ok(())
-}
-
-fn load_entries() -> Result<Vec<PasswordEntry>, Box<dyn std::error::Error>> {
-    let path = std::path::Path::new("vault.json");
-
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-
-    let contents = std::fs::read_to_string(path)?;
-
-    let entries: Vec<PasswordEntry> = serde_json::from_str(&contents)?;
-
-    Ok(entries)
-}
-
 fn generate_salt() -> Result<[u8; 16], getrandom::Error> {
     let mut salt = [0u8; 16];
 
@@ -95,11 +81,102 @@ fn encrypt_data(
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let cipher = Aes256Gcm::new_from_slice(key)?;
 
-    let nonce = Nonce::from_slice(nonce);
+    let nonce = Nonce::try_from(nonce.as_slice())?;
 
-    let ciphertext = cipher.encrypt(nonce, plaintext)?;
+    let ciphertext = cipher.encrypt(&nonce, plaintext)?;
 
     Ok(ciphertext)
+}
+
+fn encrypt_entries(
+    entries: &[PasswordEntry],
+    key: &[u8; 32],
+) -> Result<(Vec<u8>, [u8; 12]), Box<dyn std::error::Error>> {
+    let plaintext = serde_json::to_vec(entries)?;
+
+    let mut nonce = [0u8; 12];
+    fill(&mut nonce)?;
+
+    let ciphertext = encrypt_data(&plaintext, key, &nonce)?;
+
+    Ok((ciphertext, nonce))
+}
+
+fn save_encrypted_vault(
+    entries: &[PasswordEntry],
+    key: &[u8; 32],
+    salt: &[u8; 16],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (ciphertext, nonce) = encrypt_entries(entries, key)?;
+
+    let encrypted_vault = EncryptedVault {
+        version: 1,
+        salt: STANDARD.encode(salt),
+        nonce: STANDARD.encode(nonce),
+        ciphertext: STANDARD.encode(ciphertext),
+    };
+
+    let json = serde_json::to_string_pretty(&encrypted_vault)?;
+
+    std::fs::write("vault.enc.json", json)?;
+
+    Ok(())
+}
+
+fn load_encrypted_vault(
+    master_password: &str,
+) -> Result<Vec<PasswordEntry>, Box<dyn std::error::Error>> {
+    let contents = std::fs::read_to_string("vault.enc.json")?;
+
+    let vault: EncryptedVault = serde_json::from_str(&contents)?;
+
+    if vault.version != 1 {
+        return Err("Unsupported vault version".into());
+    };
+
+    let salt: [u8; 16] = STANDARD
+        .decode(&vault.salt)?
+        .try_into()
+        .map_err(|_| "Invalid salt length")?;
+
+    let nonce: [u8; 12] = STANDARD
+        .decode(&vault.nonce)?
+        .try_into()
+        .map_err(|_| "Invalid nonce length")?;
+
+    let ciphertext = STANDARD.decode(&vault.ciphertext)?;
+
+    let key = derive_key(master_password, &salt)?;
+
+    let plaintext = decrypt_data(&ciphertext, &key, &nonce)?;
+
+    let entries: Vec<PasswordEntry> = serde_json::from_slice(&plaintext)?;
+
+    Ok(entries)
+}
+
+fn vault_exists() -> bool {
+    std::path::Path::new("vault.enc.json").exists()
+}
+
+fn unlock_vault() -> Result<(Vec<PasswordEntry>, [u8; 32], [u8; 16]), Box<dyn std::error::Error>> {
+    let master_password = get_master_password()?;
+
+    let entries = load_encrypted_vault(&master_password)?;
+
+    let contents = std::fs::read_to_string("vault.enc.json")?;
+    let vault: EncryptedVault = serde_json::from_str(&contents)?;
+
+    let salt: [u8; 16] = STANDARD
+        .decode(&vault.salt)?
+        .try_into()
+        .map_err(|_| "Invalid salt length")?;
+
+    let key = derive_key(&master_password, &salt)?;
+
+    println!("Vault unlocked successfully!");
+
+    Ok((entries, key, salt))
 }
 
 fn decrypt_data(
@@ -109,84 +186,67 @@ fn decrypt_data(
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let cipher = Aes256Gcm::new_from_slice(key)?;
 
-    let nonce = Nonce::from_slice(nonce);
-
-    let plaintext = cipher.decrypt(nonce, ciphertext)?;
+    let nonce = Nonce::try_from(nonce.as_slice())?;
+    let plaintext = cipher.decrypt(&nonce, ciphertext)?;
 
     Ok(plaintext)
 }
 
 fn main() {
-    let salt = match generate_salt() {
-        Ok(salt) => {
-            println!("Salt generated successfully!");
-            salt
+    let (mut entries, key, salt) = if vault_exists() {
+        println!("Existing encrypted vault found!");
+
+        match unlock_vault() {
+            Ok((entries, key, salt)) => {
+                println!("Successfully loaded {} entries.", entries.len());
+                (entries, key, salt)
+            }
+            Err(error) => {
+                eprintln!("Failed to unlock vault: {error}");
+                return;
+            }
         }
-        Err(error) => {
-            eprintln!("Failed to generate salt: {error}");
+    } else {
+        println!("No encrypted vault found. Creating a new vault.");
+
+        let master_password = match get_master_password() {
+            Ok(password) if !password.is_empty() => password,
+            Ok(_) => {
+                eprintln!("Master password cannot be empty!");
+                return;
+            }
+            Err(error) => {
+                eprintln!("Failed to read master password: {error}");
+                return;
+            }
+        };
+
+        let salt = match generate_salt() {
+            Ok(salt) => salt,
+            Err(error) => {
+                eprintln!("Failed to generate salt: {error}");
+                return;
+            }
+        };
+
+        let key = match derive_key(&master_password, &salt) {
+            Ok(key) => key,
+            Err(error) => {
+                eprintln!("Key derivation failed: {error}");
+                return;
+            }
+        };
+
+        let entries = Vec::new();
+
+        if let Err(error) = save_encrypted_vault(&entries, &key, &salt) {
+            eprintln!("Failed to create encrypted vault: {error}");
             return;
         }
-    };
 
-    let master_password = match get_master_password() {
-        Ok(master_password) => master_password,
-        Err(error) => {
-            eprintln!("Failed to read Master Password: {error}");
-            return;
-        }
-    };
-    println!("Master Password received successfully!");
+        println!("New encrypted vault created successfully!");
 
-    let key = match derive_key(&master_password, &salt) {
-        Ok(key) => {
-            println!("Key derived successfully!");
-            println!("Key length: {} bytes", key.len());
-            key
-        }
-        Err(error) => {
-            eprintln!("Key derivation failed: {error}");
-            return;
-        }
-    };
-
-    let test_data = b"RustVault Encryption test";
-
-    let mut nonce = [0u8; 12];
-
-    if let Err(error) = fill(&mut nonce) {
-        eprintln!("Failed to generate nonce: {error}");
-        return;
-    }
-
-    let ciphertext = match encrypt_data(test_data, &key, &nonce) {
-        Ok(ciphertext) => ciphertext,
-        Err(error) => {
-            eprintln!("Encryption Failed: {error}");
-            return;
-        }
-    };
-
-    let plaintext = match decrypt_data(&ciphertext, &key, &nonce) {
-        Ok(plaintext) => plaintext,
-        Err(error) => {
-            eprintln!("Decryption Failed: {error}");
-            return;
-        }
-    };
-
-    assert_eq!(plaintext.as_slice(), test_data);
-
-    println!("Encryption & Decryption succeeded!");
-
-    let mut entries = match load_entries() {
-        Ok(entries) => {
-            println!("Loaded {} saved entries.", entries.len());
-            entries
-        }
-        Err(error) => {
-            eprintln!("Failed to load vault: {error}");
-            return;
-        }
+        (entries, key, salt)
     };
 
     loop {
@@ -248,16 +308,16 @@ fn main() {
                 println!();
 
                 loop {
-                    println!("Enter the password: ");
-
                     password.clear();
-
-                    io::stdin()
-                        .read_line(&mut password)
-                        .expect("Failed to read password.");
-
+                    match rpassword::prompt_password("Enter the password: ") {
+                        Ok(input) => password = input,
+                        Err(error) => {
+                            eprintln!("Failed to read password: {error}");
+                            return;
+                        }
+                    }
                     if password.trim().is_empty() {
-                        println!("Password cannot be empty! Try again.")
+                        println!("Password cannot be empty! Try again.");
                     } else {
                         println!("Password accepted!");
                         break;
@@ -281,9 +341,9 @@ fn main() {
                 } else {
                     entries.push(entry);
                 }
-                match save_entries(&entries) {
-                    Ok(()) => println!("Vault saved successfully!"),
-                    Err(error) => eprintln!("Failed to save entries: {error}"),
+                match save_encrypted_vault(&entries, &key, &salt) {
+                    Ok(()) => println!("Encrypted vault saved successfully!"),
+                    Err(error) => eprintln!("Failed to save encrypted vault: {error}"),
                 }
             }
             "2" => {
@@ -348,9 +408,9 @@ fn main() {
                         None => println!("Failed to remove the entry!"),
                     }
 
-                    match save_entries(&entries) {
-                        Ok(()) => println!("Vault updated successfully!"),
-                        Err(error) => eprintln!("Failed to save vault: {error}"),
+                    match save_encrypted_vault(&entries, &key, &salt) {
+                        Ok(()) => println!("Encrypted vault updated successfully!"),
+                        Err(error) => eprintln!("Failed to update encrypted vault: {error}"),
                     }
                 }
             }
