@@ -56,6 +56,22 @@ fn get_master_password() -> Result<String, Box<dyn std::error::Error>> {
     Ok(master_password)
 }
 
+fn create_master_password() -> Result<String, Box<dyn std::error::Error>> {
+    let password = rpassword::prompt_password("Create master password: ")?;
+
+    if password.is_empty() {
+        return Err("Master password cannot be empty".into());
+    }
+
+    let confirmation = rpassword::prompt_password("Confirm master password: ")?;
+
+    if password != confirmation {
+        return Err("Master passwords do not match".into());
+    }
+
+    Ok(password)
+}
+
 fn generate_salt() -> Result<[u8; 16], getrandom::Error> {
     let mut salt = [0u8; 16];
 
@@ -201,22 +217,19 @@ fn main() {
                 println!("Successfully loaded {} entries.", entries.len());
                 (entries, key, salt)
             }
-            Err(error) => {
-                eprintln!("Failed to unlock vault: {error}");
+            Err(_) => {
+                println!("Failed to unlock vault.");
+                println!("Incorrect master password or corrupted vault data.");
                 return;
             }
         }
     } else {
         println!("No encrypted vault found. Creating a new vault.");
 
-        let master_password = match get_master_password() {
-            Ok(password) if !password.is_empty() => password,
-            Ok(_) => {
-                eprintln!("Master password cannot be empty!");
-                return;
-            }
+        let master_password = match create_master_password() {
+            Ok(password) => password,
             Err(error) => {
-                eprintln!("Failed to read master password: {error}");
+                eprintln!("Failed to create master password: {error}");
                 return;
             }
         };
